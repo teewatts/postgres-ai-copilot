@@ -10,8 +10,8 @@ from app.schemas.input import ConnectedAnalysisInput, ConnectionSettings
 from app.services.analyze_query import analyze_connected_query
 
 
-def test_analyze_connected_query_recommends_investigation_when_email_index_exists(monkeypatch) -> None:
-    """Ensure connected analysis avoids a redundant index recommendation when an email index exists but is not used."""
+def test_analyze_connected_query_recommends_investigation_when_predicate_index_exists(monkeypatch) -> None:
+    """Ensure connected analysis avoids a redundant index recommendation when a predicate index exists but is not used."""
     sample_plan_json = """
     [
       {
@@ -84,8 +84,8 @@ def test_analyze_connected_query_recommends_investigation_when_email_index_exist
     assert "email" in rationale
 
 
-def test_analyze_connected_query_does_not_recommend_new_index_when_plan_already_uses_one(monkeypatch) -> None:
-    """Ensure connected analysis does not recommend a new email index when the plan already uses one."""
+def test_analyze_connected_query_does_not_recommend_new_index_when_plan_already_uses_predicate_index(monkeypatch) -> None:
+    """Ensure connected analysis does not recommend a new index when the plan already uses the predicate column index."""
     sample_plan_json = """
     [
       {
