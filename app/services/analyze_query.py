@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from app.parsers.explain_json_parser import parse_explain_json
 from app.parsers.explain_text_parser import parse_explain_text
+from app.schemas.database_metadata import TableMetadata
 from app.schemas.input import ConnectedAnalysisInput, ExplainFormat, ManualAnalysisInput
 from app.schemas.output import (
     AnalysisOutput,
@@ -21,12 +22,41 @@ from app.schemas.output import (
     Recommendation,
     RecommendationType,
 )
-from app.services.postgres_client import get_explain_json
+from app.services.metadata_inference import infer_primary_table
+from app.services.postgres_client import get_explain_json, get_table_metadata
+
+
+def _table_has_index_on_column(table_metadata: TableMetadata, column_name: str) -> bool:
+    """
+    Check whether any known index definition appears to cover the target column.
+
+    Args:
+        table_metadata: Metadata for the relevant table.
+        column_name: Column name to look for inside index definitions.
+
+    Returns:
+        True if an existing index appears to include the target column,
+        otherwise False.
+
+    Notes:
+        This first implementation uses a simple string check against index
+        definitions. Later versions can parse index definitions more precisely.
+    """
+    target = f"({column_name}"
+    fallback = f"{column_name})"
+
+    for index in table_metadata.indexes:
+        indexdef_lower = index.indexdef.lower()
+        if target in indexdef_lower or fallback in indexdef_lower:
+            return True
+
+    return False
 
 
 def _build_analysis_output(
     sql_query: str,
     plan_summary,
+    table_metadata: TableMetadata | None = None,
 ) -> AnalysisOutput:
     """
     Build the current heuristic analysis result from a normalized plan summary.
@@ -34,6 +64,7 @@ def _build_analysis_output(
     Args:
         sql_query: The SQL query being analyzed.
         plan_summary: Parsed and normalized plan data.
+        table_metadata: Optional database metadata used to strengthen recommendations.
 
     Returns:
         A normalized analysis result containing heuristic findings,
@@ -91,10 +122,20 @@ def _build_analysis_output(
             )
 
     sql_lower = sql_query.lower()
+    should_recommend_email_index = "email" in sql_lower
+    email_index_already_exists = False
 
-    # The MVP uses a simple query-based heuristic for email predicates.
-    # This will later evolve into more schema-aware recommendation logic.
-    if "email" in sql_lower:
+    # When metadata is available, use it to avoid suggesting clearly redundant indexes.
+    if table_metadata is not None:
+        evidence.append(
+            f"Fetched metadata for {table_metadata.table_schema}.{table_metadata.table_name}."
+        )
+        email_index_already_exists = _table_has_index_on_column(table_metadata, "email")
+
+        if email_index_already_exists:
+            evidence.append("An existing index appears to already include the email column.")
+
+    if should_recommend_email_index and not email_index_already_exists:
         recommendations.append(
             Recommendation(
                 type=RecommendationType.INDEX,
@@ -109,6 +150,20 @@ def _build_analysis_output(
             )
         )
         confidence = ConfidenceLevel.HIGH
+
+    if should_recommend_email_index and email_index_already_exists:
+        recommendations.append(
+            Recommendation(
+                type=RecommendationType.INVESTIGATE,
+                priority=PriorityLevel.MEDIUM,
+                action="Investigate why the existing email index is not being used.",
+                rationale=(
+                    "Metadata suggests an index already exists on email, but the plan "
+                    "still shows a sequential scan."
+                ),
+                risk="The issue may be related to selectivity, statistics, or query shape.",
+            )
+        )
 
     if not evidence:
         evidence.append("No strong heuristic signal detected from the current input.")
@@ -144,7 +199,6 @@ def analyze_manual_query(payload: ManualAnalysisInput) -> AnalysisOutput:
     Returns:
         A normalized analysis result derived from the supplied plan input.
     """
-    # Choose the parser based on the declared EXPLAIN format.
     if payload.explain_plan and payload.explain_format == ExplainFormat.JSON:
         plan_summary = parse_explain_json(payload.explain_plan)
     else:
@@ -169,4 +223,15 @@ def analyze_connected_query(payload: ConnectedAnalysisInput) -> AnalysisOutput:
         statement_timeout_ms=payload.connection.statement_timeout_ms,
     )
     plan_summary = parse_explain_json(plan_json)
-    return _build_analysis_output(payload.sql_query, plan_summary)
+
+    table_metadata = None
+    inferred_table = infer_primary_table(plan_summary)
+    if inferred_table is not None:
+        schema_name, table_name = inferred_table
+        table_metadata = get_table_metadata(
+            database_url=payload.connection.database_url,
+            table_schema=schema_name,
+            table_name=table_name,
+        )
+
+    return _build_analysis_output(payload.sql_query, plan_summary, table_metadata=table_metadata)
