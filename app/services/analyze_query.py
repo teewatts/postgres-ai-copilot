@@ -1,16 +1,16 @@
 """
-Service-layer analysis logic for manual query analysis.
+Service-layer analysis logic for manual and connected query analysis.
 
-This module contains the current MVP analysis workflow. It parses the supplied
-execution plan, applies a small set of deterministic heuristics, and returns
-a normalized analysis result. Keeping this logic out of the API route makes
-the code easier to test and evolve.
+This module contains the current analysis workflows. It parses supplied
+execution plans or fetches them from PostgreSQL, applies a small set of
+deterministic heuristics, and returns a normalized analysis result.
 """
 
 from __future__ import annotations
 
+from app.parsers.explain_json_parser import parse_explain_json
 from app.parsers.explain_text_parser import parse_explain_text
-from app.schemas.input import ManualAnalysisInput
+from app.schemas.input import ConnectedAnalysisInput, ExplainFormat, ManualAnalysisInput
 from app.schemas.output import (
     AnalysisOutput,
     BottleneckCategory,
@@ -21,21 +21,24 @@ from app.schemas.output import (
     Recommendation,
     RecommendationType,
 )
+from app.services.postgres_client import get_explain_json
 
 
-def analyze_manual_query(payload: ManualAnalysisInput) -> AnalysisOutput:
+def _build_analysis_output(
+    sql_query: str,
+    plan_summary,
+) -> AnalysisOutput:
     """
-    Analyze a manually supplied SQL query and optional text execution plan.
+    Build the current heuristic analysis result from a normalized plan summary.
 
     Args:
-        payload: Manual analysis input provided by the caller.
+        sql_query: The SQL query being analyzed.
+        plan_summary: Parsed and normalized plan data.
 
     Returns:
         A normalized analysis result containing heuristic findings,
         recommendations, and validation guidance.
     """
-    plan_summary = parse_explain_text(payload.explain_plan or "")
-
     evidence: list[str] = []
     recommendations: list[Recommendation] = []
     estimate_mismatches: list[EstimateMismatch] = []
@@ -87,7 +90,7 @@ def analyze_manual_query(payload: ManualAnalysisInput) -> AnalysisOutput:
                 )
             )
 
-    sql_lower = payload.sql_query.lower()
+    sql_lower = sql_query.lower()
 
     # The MVP uses a simple query-based heuristic for email predicates.
     # This will later evolve into more schema-aware recommendation logic.
@@ -129,3 +132,41 @@ def analyze_manual_query(payload: ManualAnalysisInput) -> AnalysisOutput:
             "Do not run CREATE INDEX directly on a production hot path without considering operational impact.",
         ],
     )
+
+
+def analyze_manual_query(payload: ManualAnalysisInput) -> AnalysisOutput:
+    """
+    Analyze a manually supplied SQL query and optional execution plan.
+
+    Args:
+        payload: Manual analysis input provided by the caller.
+
+    Returns:
+        A normalized analysis result derived from the supplied plan input.
+    """
+    # Choose the parser based on the declared EXPLAIN format.
+    if payload.explain_plan and payload.explain_format == ExplainFormat.JSON:
+        plan_summary = parse_explain_json(payload.explain_plan)
+    else:
+        plan_summary = parse_explain_text(payload.explain_plan or "")
+
+    return _build_analysis_output(payload.sql_query, plan_summary)
+
+
+def analyze_connected_query(payload: ConnectedAnalysisInput) -> AnalysisOutput:
+    """
+    Analyze a query by retrieving its plan directly from PostgreSQL.
+
+    Args:
+        payload: Connected-mode analysis input with connection settings.
+
+    Returns:
+        A normalized analysis result derived from a live EXPLAIN (FORMAT JSON) call.
+    """
+    plan_json = get_explain_json(
+        database_url=payload.connection.database_url,
+        sql_query=payload.sql_query,
+        statement_timeout_ms=payload.connection.statement_timeout_ms,
+    )
+    plan_summary = parse_explain_json(plan_json)
+    return _build_analysis_output(payload.sql_query, plan_summary)
