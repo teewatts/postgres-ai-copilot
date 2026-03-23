@@ -1,3 +1,10 @@
+"""
+Tests for input and output schema contracts.
+
+These tests ensure that fixture payloads can be loaded into the request
+schemas and that the response models can be constructed with valid data.
+"""
+
 import json
 from pathlib import Path
 
@@ -14,6 +21,7 @@ from app.schemas.output import (
 
 
 def test_manual_analysis_input_fixture_loads() -> None:
+    """Ensure the sample fixture can be loaded into the manual input schema."""
     fixture_path = Path("tests/fixtures/cases/slow_seq_scan_case.json")
     payload = json.loads(fixture_path.read_text())
 
@@ -25,6 +33,7 @@ def test_manual_analysis_input_fixture_loads() -> None:
 
 
 def test_analysis_output_schema_can_be_constructed() -> None:
+    """Ensure the output schema accepts a representative analysis payload."""
     output = AnalysisOutput(
         summary="Query performs a sequential scan on users for a selective email predicate.",
         confidence=ConfidenceLevel.HIGH,
@@ -32,7 +41,7 @@ def test_analysis_output_schema_can_be_constructed() -> None:
             category=BottleneckCategory.SCAN,
             evidence=[
                 "Plan shows Seq Scan on users",
-                "Rows Removed by Filter is very high"
+                "Rows Removed by Filter is very high",
             ],
         ),
         recommendations=[
@@ -40,14 +49,17 @@ def test_analysis_output_schema_can_be_constructed() -> None:
                 type=RecommendationType.INDEX,
                 priority=PriorityLevel.HIGH,
                 action="Create an index on users(email).",
-                rationale="The predicate filters on email and the current plan scans nearly the entire table.",
+                rationale=(
+                    "The predicate filters on email and the current plan scans "
+                    "nearly the entire table."
+                ),
                 risk="Additional write overhead and index storage cost.",
                 sql_candidate="CREATE INDEX CONCURRENTLY idx_users_email ON users (email);",
             )
         ],
         verification_steps=[
             "Run EXPLAIN ANALYZE again after creating the index.",
-            "Confirm the planner switches to an Index Scan or Index Only Scan if appropriate."
+            "Confirm the planner switches to an Index Scan or Index Only Scan if appropriate.",
         ],
         do_not_do=[
             "Do not assume the same index is beneficial if email has very low selectivity across workloads."

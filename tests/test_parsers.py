@@ -1,3 +1,11 @@
+"""
+Tests for text-plan parsing.
+
+These tests protect the parser contract for the initial fixture-driven MVP.
+They ensure that key plan fields are extracted consistently from the sample
+EXPLAIN ANALYZE text case.
+"""
+
 import json
 from pathlib import Path
 
@@ -5,6 +13,7 @@ from app.parsers.explain_text_parser import parse_explain_text
 
 
 def test_parse_explain_text_for_seq_scan_case() -> None:
+    """Ensure the parser extracts the expected fields from the seq-scan fixture."""
     fixture_path = Path("tests/fixtures/cases/slow_seq_scan_case.json")
     payload = json.loads(fixture_path.read_text())
 

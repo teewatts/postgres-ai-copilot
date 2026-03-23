@@ -1,12 +1,31 @@
+"""
+Internal schemas for normalized execution-plan data.
+
+These models represent the parsed plan structure used internally by the
+analysis pipeline. They allow parsers, heuristics, and later LLM-based
+analysis to operate on a stable data contract instead of raw plan text.
+"""
+
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
 
 class PlanNode(BaseModel):
-    node_type: str = Field(..., description="Plan node type, e.g. Seq Scan, Index Scan, Nested Loop")
-    relation_name: str | None = Field(default=None, description="Underlying table or relation name")
-    index_name: str | None = Field(default=None, description="Index name when applicable")
+    """Represents a single node within a parsed execution plan."""
+
+    node_type: str = Field(
+        ...,
+        description="Plan node type, such as Seq Scan, Index Scan, or Nested Loop",
+    )
+    relation_name: str | None = Field(
+        default=None,
+        description="Underlying table or relation name",
+    )
+    index_name: str | None = Field(
+        default=None,
+        description="Index name when applicable",
+    )
     startup_cost: float | None = None
     total_cost: float | None = None
     plan_rows: float | None = None
@@ -20,7 +39,9 @@ class PlanNode(BaseModel):
 
 
 class PlanSummary(BaseModel):
-    format: str = Field(..., description="Source plan format, e.g. text or json")
+    """Represents a normalized view of an execution plan and its metadata."""
+
+    format: str = Field(..., description="Source plan format, such as text or json")
     raw_plan: str = Field(..., description="Original plan payload")
     planning_time_ms: float | None = None
     execution_time_ms: float | None = None
