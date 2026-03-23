@@ -1,0 +1,12 @@
+fastapi<1.0,>=0.130
+uvicorn[standard]<1.0,>=0.30
+pydantic<3.0,>=2.8
+streamlit<2.0,>=1.40
+sqlglot<26.0,>=25.0
+psycopg[binary]<4.0,>=3.2
+httpx<1.0,>=0.27
+
+[dev]
+pytest<9.0,>=8.0
+ruff<1.0,>=0.6
+mypy<2.0,>=1.11

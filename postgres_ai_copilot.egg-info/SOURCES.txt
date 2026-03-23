@@ -1,0 +1,12 @@
+README.md
+pyproject.toml
+app/__init__.py
+app/main.py
+postgres_ai_copilot.egg-info/PKG-INFO
+postgres_ai_copilot.egg-info/SOURCES.txt
+postgres_ai_copilot.egg-info/dependency_links.txt
+postgres_ai_copilot.egg-info/requires.txt
+postgres_ai_copilot.egg-info/top_level.txt
+tests/test_advisor_schema.py
+tests/test_heuristics.py
+tests/test_parsers.py

@@ -1,0 +1,98 @@
+Metadata-Version: 2.4
+Name: postgres-ai-copilot
+Version: 0.1.0
+Summary: AI-assisted PostgreSQL query plan analysis and tuning recommendations
+Author: Terry Watts
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi<1.0,>=0.130
+Requires-Dist: uvicorn[standard]<1.0,>=0.30
+Requires-Dist: pydantic<3.0,>=2.8
+Requires-Dist: streamlit<2.0,>=1.40
+Requires-Dist: sqlglot<26.0,>=25.0
+Requires-Dist: psycopg[binary]<4.0,>=3.2
+Requires-Dist: httpx<1.0,>=0.27
+Provides-Extra: dev
+Requires-Dist: pytest<9.0,>=8.0; extra == "dev"
+Requires-Dist: ruff<1.0,>=0.6; extra == "dev"
+Requires-Dist: mypy<2.0,>=1.11; extra == "dev"
+
+# postgres-ai-copilot
+
+AI-assisted PostgreSQL query plan analysis and tuning recommendations.
+
+## Overview
+
+`postgres-ai-copilot` is a local-first tool for analyzing PostgreSQL queries and execution plans.
+
+The project combines:
+- deterministic heuristics
+- structured LLM reasoning
+- evidence-based recommendations
+- a path toward live database analysis
+
+## Initial Goal
+
+For v1, the tool accepts:
+- a SQL query
+- optional schema and index definitions
+- an optional `EXPLAIN` or `EXPLAIN ANALYZE` plan
+
+It returns:
+- a bottleneck summary
+- likely root cause
+- estimate mismatch flags
+- index recommendations
+- rewrite suggestions
+- safety notes
+- confidence level
+- structured JSON output for evaluation
+
+## Why this project
+
+Query tuning is often expert-heavy and time-consuming. PostgreSQL execution plans contain rich signals, but they are not always easy to interpret quickly. This project aims to make that analysis more accessible and repeatable while preserving engineering rigor.
+
+## Planned roadmap
+
+### v1
+Offline advisor:
+- manual query input
+- pasted execution plan
+- optional schema and index input
+- heuristic + LLM recommendations
+
+### v1.5
+Connected mode:
+- connect to PostgreSQL
+- auto-run `EXPLAIN (FORMAT JSON)`
+- auto-fetch relevant schema metadata
+- auto-fetch indexes
+
+### v2
+Operational analysis:
+- workload statistics
+- slow-query summaries
+- trend detection
+- stronger diagnostics
+
+### v3
+AI DBA direction:
+- supervised remediation drafts
+- maintenance advisories
+- regression analysis
+- human-in-the-loop actions
+
+## Project structure
+
+```text
+app/
+  api/
+  heuristics/
+  llm/
+  parsers/
+  schemas/
+  services/
+  ui/
+tests/
+examples/
+docs/
