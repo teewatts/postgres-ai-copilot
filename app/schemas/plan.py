@@ -15,6 +15,7 @@ class PlanNode(BaseModel):
     filter_condition: str | None = None
     index_condition: str | None = None
     join_filter: str | None = None
+    rows_removed_by_filter: float | None = None
     children: list["PlanNode"] = Field(default_factory=list)
 
 
