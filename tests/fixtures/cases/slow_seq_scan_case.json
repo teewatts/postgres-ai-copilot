@@ -1,0 +1,23 @@
+{
+  "name": "slow_seq_scan_case",
+  "description": "Large sequential scan on users table with selective email filter and no supporting index.",
+  "input": {
+    "mode": "manual",
+    "sql_query": "SELECT id, email, created_at FROM users WHERE email = 'alice@example.com';",
+    "explain_plan": "Seq Scan on users  (cost=0.00..18342.00 rows=1 width=48) (actual time=0.120..412.345 rows=1 loops=1)\n  Filter: ((email)::text = 'alice@example.com'::text)\n  Rows Removed by Filter: 999999\nPlanning Time: 0.250 ms\nExecution Time: 412.410 ms",
+    "explain_format": "text",
+    "schema_ddl": "CREATE TABLE users (\n  id bigint primary key,\n  email text not null,\n  created_at timestamptz not null\n);",
+    "index_definitions": "CREATE UNIQUE INDEX users_pkey ON users (id);",
+    "notes": "Query is expected to return a single row quickly."
+  },
+  "expected_signals": {
+    "primary_bottleneck": "scan",
+    "should_recommend_index": true,
+    "should_flag_estimate_mismatch": false,
+    "expected_keywords": [
+      "sequential scan",
+      "email",
+      "index"
+    ]
+  }
+}
