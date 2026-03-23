@@ -20,7 +20,7 @@ def test_analyze_manual_query_recommends_email_index_for_seq_scan_case() -> None
     analysis_input = ManualAnalysisInput(**payload["input"])
     result = analyze_manual_query(analysis_input)
 
-    assert result.primary_bottleneck.category.value == "scan"
+    assert result.primary_bottleneck.category.value == "seq_scan"
     assert len(result.recommendations) >= 1
     assert result.recommendations[0].type.value == "index"
     assert "email" in result.recommendations[0].action.lower()

@@ -53,6 +53,34 @@ def _table_has_index_on_column(table_metadata: TableMetadata, column_name: str) 
     return False
 
 
+def _plan_uses_index_for_column(plan_summary, column_name: str) -> bool:
+    """
+    Check whether the parsed plan already appears to use an index on the target column.
+
+    Args:
+        plan_summary: Parsed and normalized execution-plan data.
+        column_name: Column name to look for in the plan's index condition.
+
+    Returns:
+        True if the root node is an index-based scan and its index condition
+        references the target column, otherwise False.
+    """
+    root = plan_summary.root_node
+    if root is None:
+        return False
+
+    # Keep the first implementation intentionally narrow and easy to reason about.
+    # We only inspect the root node and look for common index-based scan names.
+    node_type_lower = root.node_type.lower()
+    if "index scan" not in node_type_lower and "bitmap index scan" not in node_type_lower:
+        return False
+
+    if not root.index_condition:
+        return False
+
+    return column_name.lower() in root.index_condition.lower()
+
+
 def _build_analysis_output(
     sql_query: str,
     plan_summary,
@@ -80,18 +108,25 @@ def _build_analysis_output(
     root = plan_summary.root_node
 
     if root is not None:
-        # A sequential scan is often the first signal that the query may be
-        # scanning more data than expected for a selective predicate.
-        if root.node_type.lower() == "seq scan":
-            category = BottleneckCategory.SCAN
+        root_node_type_lower = root.node_type.lower()
+
+        # Distinguish the major access patterns up front because that drives
+        # the rest of the recommendation logic.
+        if root_node_type_lower == "seq scan":
+            category = BottleneckCategory.SEQ_SCAN
             evidence.append(f"Plan shows {root.node_type} on {root.relation_name}.")
             summary = (
                 "The query appears to rely on a sequential scan, which may be "
                 "inefficient for selective filters."
             )
+        elif "index scan" in root_node_type_lower:
+            category = BottleneckCategory.INDEX_SCAN
+            evidence.append(f"Plan shows {root.node_type} on {root.relation_name}.")
+            summary = (
+                "The query is already using an index-based access path for the "
+                "current predicate."
+            )
 
-        # A large rows-removed count suggests the database inspected many rows
-        # only to discard almost all of them after applying the filter.
         if root.rows_removed_by_filter and root.rows_removed_by_filter > 10000:
             evidence.append(
                 f"Rows Removed by Filter is high at {int(root.rows_removed_by_filter)}."
@@ -99,6 +134,9 @@ def _build_analysis_output(
 
         if root.filter_condition:
             evidence.append(f"Filter condition detected: {root.filter_condition}")
+
+        if root.index_condition:
+            evidence.append(f"Index condition detected: {root.index_condition}")
 
         # Large estimate mismatches can point to stale statistics, skewed data,
         # or a plan choice based on incorrect planner assumptions.
@@ -122,20 +160,51 @@ def _build_analysis_output(
             )
 
     sql_lower = sql_query.lower()
-    should_recommend_email_index = "email" in sql_lower
-    email_index_already_exists = False
+    query_mentions_email = "email" in sql_lower
+    email_index_exists = False
+    email_index_is_already_used = _plan_uses_index_for_column(plan_summary, "email")
 
     # When metadata is available, use it to avoid suggesting clearly redundant indexes.
     if table_metadata is not None:
         evidence.append(
             f"Fetched metadata for {table_metadata.table_schema}.{table_metadata.table_name}."
         )
-        email_index_already_exists = _table_has_index_on_column(table_metadata, "email")
+        email_index_exists = _table_has_index_on_column(table_metadata, "email")
 
-        if email_index_already_exists:
+        if email_index_exists:
             evidence.append("An existing index appears to already include the email column.")
 
-    if should_recommend_email_index and not email_index_already_exists:
+    if email_index_is_already_used:
+        evidence.append("The current plan already uses an index condition on email.")
+        recommendations.append(
+            Recommendation(
+                type=RecommendationType.INVESTIGATE,
+                priority=PriorityLevel.LOW,
+                action="No new email index recommendation is needed for this query.",
+                rationale=(
+                    "The execution plan already uses an index condition on email, "
+                    "so adding another email index would likely be redundant."
+                ),
+                risk="Further tuning should focus on actual latency, row estimates, or broader workload behavior.",
+            )
+        )
+        confidence = ConfidenceLevel.HIGH
+
+    elif query_mentions_email and email_index_exists:
+        recommendations.append(
+            Recommendation(
+                type=RecommendationType.INVESTIGATE,
+                priority=PriorityLevel.MEDIUM,
+                action="Investigate why the existing email index is not being used.",
+                rationale=(
+                    "Metadata suggests an index already exists on email, but the plan "
+                    "still shows a sequential scan."
+                ),
+                risk="The issue may be related to selectivity, statistics, or query shape.",
+            )
+        )
+
+    elif query_mentions_email:
         recommendations.append(
             Recommendation(
                 type=RecommendationType.INDEX,
@@ -150,20 +219,6 @@ def _build_analysis_output(
             )
         )
         confidence = ConfidenceLevel.HIGH
-
-    if should_recommend_email_index and email_index_already_exists:
-        recommendations.append(
-            Recommendation(
-                type=RecommendationType.INVESTIGATE,
-                priority=PriorityLevel.MEDIUM,
-                action="Investigate why the existing email index is not being used.",
-                rationale=(
-                    "Metadata suggests an index already exists on email, but the plan "
-                    "still shows a sequential scan."
-                ),
-                risk="The issue may be related to selectivity, statistics, or query shape.",
-            )
-        )
 
     if not evidence:
         evidence.append("No strong heuristic signal detected from the current input.")

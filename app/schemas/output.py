@@ -24,7 +24,8 @@ class ConfidenceLevel(str, Enum):
 class BottleneckCategory(str, Enum):
     """High-level categories for the primary query bottleneck."""
 
-    SCAN = "scan"
+    SEQ_SCAN = "seq_scan"
+    INDEX_SCAN = "index_scan"
     JOIN = "join"
     SORT = "sort"
     STATS = "stats"

@@ -38,7 +38,7 @@ def test_analysis_output_schema_can_be_constructed() -> None:
         summary="Query performs a sequential scan on users for a selective email predicate.",
         confidence=ConfidenceLevel.HIGH,
         primary_bottleneck=BottleneckSummary(
-            category=BottleneckCategory.SCAN,
+            category=BottleneckCategory.SEQ_SCAN,
             evidence=[
                 "Plan shows Seq Scan on users",
                 "Rows Removed by Filter is very high",
@@ -66,5 +66,5 @@ def test_analysis_output_schema_can_be_constructed() -> None:
         ],
     )
 
-    assert output.primary_bottleneck.category == BottleneckCategory.SCAN
+    assert output.primary_bottleneck.category == BottleneckCategory.SEQ_SCAN
     assert output.recommendations[0].type == RecommendationType.INDEX
