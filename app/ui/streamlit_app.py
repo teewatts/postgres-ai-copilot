@@ -8,8 +8,6 @@ it reuses the existing service-layer functions directly.
 
 from __future__ import annotations
 
-import json
-
 import streamlit as st
 from pydantic import ValidationError
 
@@ -20,6 +18,29 @@ from app.schemas.input import (
     ManualAnalysisInput,
 )
 from app.services.analyze_query import analyze_connected_query, analyze_manual_query
+
+
+def _build_database_url(
+    host: str,
+    port: int,
+    database: str,
+    username: str,
+    password: str,
+) -> str:
+    """
+    Build a PostgreSQL connection string from individual connection fields.
+
+    Args:
+        host: Database host name or IP address.
+        port: Database port.
+        database: Database name.
+        username: Database user name.
+        password: Database password.
+
+    Returns:
+        A PostgreSQL connection string suitable for psycopg.
+    """
+    return f"postgresql://{username}:{password}@{host}:{port}/{database}"
 
 
 def _render_analysis_result(result) -> None:
@@ -80,43 +101,46 @@ def _manual_mode() -> None:
     """
     st.header("Manual Analysis")
 
-    sql_query = st.text_area(
-        "SQL Query",
-        height=140,
-        placeholder="SELECT id, email, created_at FROM users WHERE email = 'alice@example.com';",
-    )
+    with st.form("manual_analysis_form"):
+        sql_query = st.text_area(
+            "SQL Query",
+            height=140,
+            value="SELECT id, email, created_at FROM users WHERE email = 'alice@example.com';",
+        )
 
-    explain_format_label = st.selectbox(
-        "EXPLAIN Format",
-        options=["text", "json"],
-        index=0,
-    )
+        explain_format_label = st.selectbox(
+            "EXPLAIN Format",
+            options=["text", "json"],
+            index=0,
+        )
 
-    explain_plan = st.text_area(
-        "EXPLAIN Plan",
-        height=240,
-        placeholder="Paste EXPLAIN or EXPLAIN (FORMAT JSON) output here",
-    )
+        explain_plan = st.text_area(
+            "EXPLAIN Plan",
+            height=240,
+            placeholder="Paste EXPLAIN or EXPLAIN (FORMAT JSON) output here",
+        )
 
-    schema_ddl = st.text_area(
-        "Schema DDL (optional)",
-        height=140,
-        placeholder="CREATE TABLE users (...);",
-    )
+        schema_ddl = st.text_area(
+            "Schema DDL (optional)",
+            height=140,
+            placeholder="CREATE TABLE users (...);",
+        )
 
-    index_definitions = st.text_area(
-        "Index Definitions (optional)",
-        height=120,
-        placeholder="CREATE INDEX ...;",
-    )
+        index_definitions = st.text_area(
+            "Index Definitions (optional)",
+            height=120,
+            placeholder="CREATE INDEX ...;",
+        )
 
-    notes = st.text_area(
-        "Notes (optional)",
-        height=100,
-        placeholder="Any additional context for the analysis",
-    )
+        notes = st.text_area(
+            "Notes (optional)",
+            height=100,
+            placeholder="Any additional context for the analysis",
+        )
 
-    if st.button("Run Manual Analysis", type="primary"):
+        submitted = st.form_submit_button("Run Manual Analysis", type="primary")
+
+    if submitted:
         try:
             payload = ManualAnalysisInput(
                 mode="manual",
@@ -149,28 +173,49 @@ def _connected_mode() -> None:
     """
     st.header("Connected Analysis")
 
-    database_url = st.text_input(
-        "Database URL",
-        type="password",
-        placeholder="postgresql://postgres:password@localhost:5433/postgres_ai_copilot_demo",
-    )
+    with st.form("connected_analysis_form"):
+        col1, col2 = st.columns(2)
 
-    sql_query = st.text_area(
-        "SQL Query",
-        height=140,
-        placeholder="SELECT id, email, created_at FROM users WHERE email = 'alice@example.com';",
-    )
+        with col1:
+            host = st.text_input("Host", value="localhost")
+            port = st.number_input(
+                "Port",
+                min_value=1,
+                max_value=65535,
+                value=5433,
+                step=1,
+            )
+            database = st.text_input("Database", value="postgres_ai_copilot_demo")
 
-    statement_timeout_ms = st.number_input(
-        "Statement Timeout (ms)",
-        min_value=100,
-        max_value=60000,
-        value=5000,
-        step=100,
-    )
+        with col2:
+            username = st.text_input("Username", value="postgres")
+            password = st.text_input("Password", type="password")
+            statement_timeout_ms = st.number_input(
+                "Statement Timeout (ms)",
+                min_value=100,
+                max_value=60000,
+                value=5000,
+                step=100,
+            )
 
-    if st.button("Run Connected Analysis", type="primary"):
+        sql_query = st.text_area(
+            "SQL Query",
+            height=140,
+            value="SELECT id, email, created_at FROM users WHERE email = 'alice@example.com';",
+        )
+
+        submitted = st.form_submit_button("Run Connected Analysis", type="primary")
+
+    if submitted:
         try:
+            database_url = _build_database_url(
+                host=host,
+                port=int(port),
+                database=database,
+                username=username,
+                password=password,
+            )
+
             payload = ConnectedAnalysisInput(
                 mode="connected",
                 sql_query=sql_query,
