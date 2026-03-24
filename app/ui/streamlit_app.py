@@ -2,8 +2,15 @@
 Streamlit UI for Postgres AI Copilot.
 
 This module provides a lightweight interactive interface for the current
-analysis workflows. It supports manual analysis, connected analysis,
-and a before/after comparison workflow for connected-mode snapshots.
+analysis workflows. It supports:
+
+- manual analysis from pasted SQL and plan text
+- connected analysis against a live PostgreSQL database
+- before/after comparison snapshots for connected analysis
+- optional AI-generated explanations for deterministic results
+
+The UI reuses the existing service-layer functions directly so the core
+analysis engine remains separate from presentation concerns.
 """
 
 from __future__ import annotations
@@ -17,6 +24,7 @@ from app.schemas.input import (
     ExplainFormat,
     ManualAnalysisInput,
 )
+from app.services.ai_explanation import generate_ai_explanation
 from app.services.analyze_query import analyze_connected_query, analyze_manual_query
 
 
@@ -45,54 +53,64 @@ def _build_database_url(
 
 def _initialize_session_state() -> None:
     """
-    Initialize Streamlit session-state keys used by the comparison workflow.
+    Initialize Streamlit session-state keys used by the UI.
 
     Streamlit session state persists values across reruns for a user session,
-    which makes it a good fit for storing before/after analysis snapshots.
+    which makes it a good fit for storing analysis results, comparison
+    snapshots, and optional AI summaries.
     """
-    if "before_snapshot" not in st.session_state:
-        st.session_state.before_snapshot = None
+    defaults = {
+        "before_snapshot": None,
+        "after_snapshot": None,
+        "last_manual_result": None,
+        "last_manual_sql": None,
+        "last_connected_result": None,
+        "last_connected_sql": None,
+        "manual_ai_summary": None,
+        "connected_ai_summary": None,
+    }
 
-    if "after_snapshot" not in st.session_state:
-        st.session_state.after_snapshot = None
-
-    if "last_connected_result" not in st.session_state:
-        st.session_state.last_connected_result = None
-
-    if "last_connected_sql" not in st.session_state:
-        st.session_state.last_connected_sql = None
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
 
 
 def _extract_comparison_fields(result) -> dict[str, str]:
     """
-    Extract a compact set of fields for before/after comparison rendering.
+    Extract a compact set of comparison-friendly fields from an analysis result.
 
     Args:
         result: The AnalysisOutput object returned by the service layer.
 
     Returns:
-        A dictionary of comparison-friendly string values.
+        A dictionary containing values used by the before/after comparison UI.
     """
     evidence = result.primary_bottleneck.evidence
 
     filter_condition = next(
-        (item.removeprefix("Filter condition detected: ").strip()
-         for item in evidence
-         if item.startswith("Filter condition detected: ")),
+        (
+            item.removeprefix("Filter condition detected: ").strip()
+            for item in evidence
+            if item.startswith("Filter condition detected: ")
+        ),
         "N/A",
     )
 
     index_condition = next(
-        (item.removeprefix("Index condition detected: ").strip()
-         for item in evidence
-         if item.startswith("Index condition detected: ")),
+        (
+            item.removeprefix("Index condition detected: ").strip()
+            for item in evidence
+            if item.startswith("Index condition detected: ")
+        ),
         "N/A",
     )
 
     predicate_column = next(
-        (item.removeprefix("Inferred predicate column: ").strip()
-         for item in evidence
-         if item.startswith("Inferred predicate column: ")),
+        (
+            item.removeprefix("Inferred predicate column: ").strip()
+            for item in evidence
+            if item.startswith("Inferred predicate column: ")
+        ),
         "N/A",
     )
 
@@ -165,6 +183,61 @@ def _render_analysis_result(result) -> None:
     st.subheader("Do Not Do")
     for item in result.do_not_do:
         st.write(f"- {item}")
+
+
+def _render_ai_summary_output(ai_result) -> None:
+    """
+    Render a structured AI summary in the UI.
+
+    Args:
+        ai_result: The AISummaryOutput object returned by the AI explanation service.
+    """
+    st.subheader("AI Explanation")
+    st.write(f"**Executive Summary:** {ai_result.executive_summary}")
+    st.write(f"**Technical Explanation:** {ai_result.technical_explanation}")
+    st.write(f"**Remediation Summary:** {ai_result.remediation_summary}")
+    st.write(f"**Risk Summary:** {ai_result.risk_summary}")
+
+    if ai_result.next_steps:
+        st.write("**Next Steps:**")
+        for step in ai_result.next_steps:
+            st.write(f"- {step}")
+
+
+def _render_ai_summary_controls(
+    sql_query: str,
+    analysis_result,
+    summary_state_key: str,
+    form_key: str,
+) -> None:
+    """
+    Render controls for generating and displaying an optional AI explanation.
+
+    Args:
+        sql_query: The SQL query associated with the current analysis.
+        analysis_result: Deterministic AnalysisOutput from the engine.
+        summary_state_key: Session-state key used to store the generated AI summary.
+        form_key: Unique Streamlit form key for this AI generation form.
+    """
+    st.subheader("AI Explanation")
+
+    with st.form(form_key):
+        model_name = st.text_input("Ollama Model", value="llama3.1:8b")
+        submitted = st.form_submit_button("Generate AI Explanation")
+
+    if submitted:
+        try:
+            st.session_state[summary_state_key] = generate_ai_explanation(
+                sql_query=sql_query,
+                analysis_result=analysis_result,
+                model=model_name,
+            )
+        except Exception as exc:
+            st.error("AI explanation failed.")
+            st.code(str(exc))
+
+    if st.session_state.get(summary_state_key) is not None:
+        _render_ai_summary_output(st.session_state[summary_state_key])
 
 
 def _render_snapshot_card(label: str, snapshot: dict | None) -> None:
@@ -297,13 +370,25 @@ def _manual_mode() -> None:
                 notes=notes or None,
             )
             result = analyze_manual_query(payload)
-            _render_analysis_result(result)
+
+            st.session_state.last_manual_result = result
+            st.session_state.last_manual_sql = sql_query
+            st.session_state.manual_ai_summary = None
         except ValidationError as exc:
             st.error("Input validation failed.")
             st.code(str(exc))
         except Exception as exc:
             st.error("Analysis failed.")
             st.code(str(exc))
+
+    if st.session_state.last_manual_result is not None:
+        _render_analysis_result(st.session_state.last_manual_result)
+        _render_ai_summary_controls(
+            sql_query=st.session_state.last_manual_sql,
+            analysis_result=st.session_state.last_manual_result,
+            summary_state_key="manual_ai_summary",
+            form_key="manual_ai_explanation_form",
+        )
 
 
 def _connected_mode() -> None:
@@ -372,8 +457,7 @@ def _connected_mode() -> None:
 
             st.session_state.last_connected_result = result
             st.session_state.last_connected_sql = sql_query
-
-            _render_analysis_result(result)
+            st.session_state.connected_ai_summary = None
         except ValidationError as exc:
             st.error("Input validation failed.")
             st.code(str(exc))
@@ -382,6 +466,15 @@ def _connected_mode() -> None:
             st.code(str(exc))
 
     if st.session_state.last_connected_result is not None:
+        _render_analysis_result(st.session_state.last_connected_result)
+
+        _render_ai_summary_controls(
+            sql_query=st.session_state.last_connected_sql,
+            analysis_result=st.session_state.last_connected_result,
+            summary_state_key="connected_ai_summary",
+            form_key="connected_ai_explanation_form",
+        )
+
         st.subheader("Snapshot Controls")
 
         button_col1, button_col2, button_col3 = st.columns(3)
