@@ -1,44 +1,49 @@
 """
-Client helpers for the local AI explanation workflow.
+Client helpers for the local AI explanation workflows.
 
 This module talks to a local Ollama server and requests structured output
-for grounded explanation tasks. The first implementation is intentionally
-simple and focused on a single one-shot explanation call.
+for grounded explanation tasks. The first implementations are intentionally
+simple and focused on one-shot summary and comparison calls.
 """
 
 from __future__ import annotations
 
 import httpx
 
-from app.schemas.ai_summary import AISummaryOutput
+from app.schemas.ai_summary import AIComparisonSummaryOutput, AISummaryOutput
 
 
-def generate_structured_ai_summary(
+def _generate_structured_response(
     prompt: str,
-    model: str = "llama3.1:8b",
-    base_url: str = "http://localhost:11434",
-    timeout_seconds: int = 60,
-) -> AISummaryOutput:
+    schema: dict,
+    model: str,
+    base_url: str,
+    timeout_seconds: int,
+) -> str:
     """
-    Request a structured AI explanation from Ollama.
+    Request a structured response from Ollama using a JSON schema.
 
     Args:
-        prompt: Grounded prompt text built from deterministic findings.
-        model: Local Ollama model name to use.
+        prompt: Prompt text for the model.
+        schema: JSON schema used to constrain the response.
+        model: Ollama model name.
         base_url: Ollama server base URL.
-        timeout_seconds: Request timeout.
+        timeout_seconds: HTTP timeout.
 
     Returns:
-        A validated AISummaryOutput object.
+        The raw JSON string returned in Ollama's `response` field.
 
     Raises:
-        ValueError: If the Ollama response is missing the expected fields.
+        ValueError: If Ollama does not return the expected response payload.
     """
     request_payload = {
         "model": model,
         "prompt": prompt,
         "stream": False,
-        "format": AISummaryOutput.model_json_schema(),
+        "format": schema,
+        "options": {
+            "temperature": 0,
+        },
     }
 
     with httpx.Client(timeout=timeout_seconds) as client:
@@ -50,4 +55,60 @@ def generate_structured_ai_summary(
     if not raw_response_text:
         raise ValueError("Ollama response did not contain a structured 'response' field.")
 
+    return raw_response_text
+
+
+def generate_structured_ai_summary(
+    prompt: str,
+    model: str = "llama3.1:8b",
+    base_url: str = "http://localhost:11434",
+    timeout_seconds: int = 60,
+) -> AISummaryOutput:
+    """
+    Request a structured single-result AI explanation from Ollama.
+
+    Args:
+        prompt: Grounded prompt text built from deterministic findings.
+        model: Local Ollama model name to use.
+        base_url: Ollama server base URL.
+        timeout_seconds: Request timeout.
+
+    Returns:
+        A validated AISummaryOutput object.
+    """
+    raw_response_text = _generate_structured_response(
+        prompt=prompt,
+        schema=AISummaryOutput.model_json_schema(),
+        model=model,
+        base_url=base_url,
+        timeout_seconds=timeout_seconds,
+    )
     return AISummaryOutput.model_validate_json(raw_response_text)
+
+
+def generate_structured_ai_comparison_summary(
+    prompt: str,
+    model: str = "llama3.1:8b",
+    base_url: str = "http://localhost:11434",
+    timeout_seconds: int = 60,
+) -> AIComparisonSummaryOutput:
+    """
+    Request a structured before/after AI comparison explanation from Ollama.
+
+    Args:
+        prompt: Grounded prompt text built from deterministic before/after findings.
+        model: Local Ollama model name to use.
+        base_url: Ollama server base URL.
+        timeout_seconds: Request timeout.
+
+    Returns:
+        A validated AIComparisonSummaryOutput object.
+    """
+    raw_response_text = _generate_structured_response(
+        prompt=prompt,
+        schema=AIComparisonSummaryOutput.model_json_schema(),
+        model=model,
+        base_url=base_url,
+        timeout_seconds=timeout_seconds,
+    )
+    return AIComparisonSummaryOutput.model_validate_json(raw_response_text)

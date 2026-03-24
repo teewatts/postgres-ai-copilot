@@ -8,6 +8,7 @@ analysis workflows. It supports:
 - connected analysis against a live PostgreSQL database
 - before/after comparison snapshots for connected analysis
 - optional AI-generated explanations for deterministic results
+- optional AI-generated summaries of before/after comparisons
 
 The UI reuses the existing service-layer functions directly so the core
 analysis engine remains separate from presentation concerns.
@@ -24,7 +25,10 @@ from app.schemas.input import (
     ExplainFormat,
     ManualAnalysisInput,
 )
-from app.services.ai_explanation import generate_ai_explanation
+from app.services.ai_explanation import (
+    generate_ai_comparison_explanation,
+    generate_ai_explanation,
+)
 from app.services.analyze_query import analyze_connected_query, analyze_manual_query
 
 
@@ -68,6 +72,7 @@ def _initialize_session_state() -> None:
         "last_connected_sql": None,
         "manual_ai_summary": None,
         "connected_ai_summary": None,
+        "comparison_ai_summary": None,
     }
 
     for key, value in defaults.items():
@@ -204,6 +209,25 @@ def _render_ai_summary_output(ai_result) -> None:
             st.write(f"- {step}")
 
 
+def _render_ai_comparison_summary_output(ai_result) -> None:
+    """
+    Render a structured AI comparison summary in the UI.
+
+    Args:
+        ai_result: The AIComparisonSummaryOutput object returned by the AI comparison service.
+    """
+    st.subheader("AI Comparison Summary")
+    st.write(f"**Executive Summary:** {ai_result.executive_summary}")
+    st.write(f"**Technical Delta:** {ai_result.technical_delta}")
+    st.write(f"**Recommendation Change:** {ai_result.recommendation_change}")
+    st.write(f"**Validation Summary:** {ai_result.validation_summary}")
+
+    if ai_result.next_steps:
+        st.write("**Next Steps:**")
+        for step in ai_result.next_steps:
+            st.write(f"- {step}")
+
+
 def _render_ai_summary_controls(
     sql_query: str,
     analysis_result,
@@ -258,6 +282,40 @@ def _render_snapshot_card(label: str, snapshot: dict | None) -> None:
     _render_analysis_result(snapshot["result"])
 
 
+def _render_comparison_ai_controls() -> None:
+    """
+    Render controls for generating and displaying an AI comparison summary.
+
+    This only becomes available once both before and after snapshots exist.
+    """
+    before_snapshot = st.session_state.before_snapshot
+    after_snapshot = st.session_state.after_snapshot
+
+    if before_snapshot is None or after_snapshot is None:
+        return
+
+    st.subheader("AI Comparison Summary")
+
+    with st.form("comparison_ai_summary_form"):
+        model_name = st.text_input("Ollama Model for Comparison", value="llama3.1:8b")
+        submitted = st.form_submit_button("Generate AI Comparison Summary")
+
+    if submitted:
+        try:
+            st.session_state.comparison_ai_summary = generate_ai_comparison_explanation(
+                sql_query=before_snapshot["sql_query"],
+                before_result=before_snapshot["result"],
+                after_result=after_snapshot["result"],
+                model=model_name,
+            )
+        except Exception as exc:
+            st.error("AI comparison summary failed.")
+            st.code(str(exc))
+
+    if st.session_state.comparison_ai_summary is not None:
+        _render_ai_comparison_summary_output(st.session_state.comparison_ai_summary)
+
+
 def _render_comparison_view() -> None:
     """
     Render the before/after comparison section when snapshots are available.
@@ -305,6 +363,8 @@ def _render_comparison_view() -> None:
         f"- Recommendation action: `{before_fields['recommendation_action']}` → "
         f"`{after_fields['recommendation_action']}`"
     )
+
+    _render_comparison_ai_controls()
 
 
 def _manual_mode() -> None:
@@ -485,6 +545,7 @@ def _connected_mode() -> None:
                     "sql_query": st.session_state.last_connected_sql,
                     "result": st.session_state.last_connected_result,
                 }
+                st.session_state.comparison_ai_summary = None
                 st.success("Saved current connected result as Before.")
 
         with button_col2:
@@ -493,12 +554,14 @@ def _connected_mode() -> None:
                     "sql_query": st.session_state.last_connected_sql,
                     "result": st.session_state.last_connected_result,
                 }
+                st.session_state.comparison_ai_summary = None
                 st.success("Saved current connected result as After.")
 
         with button_col3:
             if st.button("Clear Comparison Snapshots"):
                 st.session_state.before_snapshot = None
                 st.session_state.after_snapshot = None
+                st.session_state.comparison_ai_summary = None
                 st.success("Cleared Before and After snapshots.")
 
         _render_comparison_view()
